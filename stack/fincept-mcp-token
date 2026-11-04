@@ -1,0 +1,15 @@
+#!/usr/bin/env python3
+"""Print Fincept Terminal's MCP bearer token (decrypts SecureStorage, Linux PBKDF2 scheme)."""
+import hashlib, sqlite3, os, platform
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+DB = os.path.expanduser("~/.local/share/com.fincept.terminal/data/fincept.db")
+mid = next(open(p).read().strip() for p in ("/etc/machine-id", "/var/lib/dbus/machine-id") if os.path.exists(p))
+ptype = platform.freedesktop_os_release().get("ID", "unknown")
+seed = mid.encode() + b"\x1f" + ptype.encode() + b"\x1f" + b"fincept-terminal/secure-storage/v1"
+con = sqlite3.connect(f"file:{DB}?mode=ro", uri=True)
+row = lambda k: con.execute("SELECT ciphertext, iv, tag FROM secure_credentials WHERE key=?", (k,)).fetchone()
+ct, iv, tag = row("__fincept_dek_v2_pbkdf2")
+kek = hashlib.pbkdf2_hmac("sha256", seed, ct[:16], 200000, 32)
+dek = AESGCM(kek).decrypt(iv, ct[16:] + tag, None)
+ct, iv, tag = row("mcp_server/token")
+print(AESGCM(dek).decrypt(iv, ct + tag, None).decode())
